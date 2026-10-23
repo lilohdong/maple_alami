@@ -7,9 +7,9 @@ export type ResetKind = 'daily' | 'weeklyBoss' | 'weeklyContent' | 'monthly';
 
 export const RESET_LABELS: Record<ResetKind, string> = {
   daily: '일일 리셋',
-  weeklyBoss: '주간 보스 (목)',
-  weeklyContent: '주간 콘텐츠 (월)',
-  monthly: '월간 보스',
+  weeklyBoss: '주간 보스 · 목',
+  weeklyContent: '주간 콘텐츠 · 월',
+  monthly: '월간 보스 · 1일',
 };
 
 /** KST 기준 다음 00:00 (now 이후, now 자체는 제외) */

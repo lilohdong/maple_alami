@@ -9,6 +9,17 @@ export interface CharacterSummary {
   world_name: string;
   character_class: string;
   character_level: number;
+  /** 캐릭터 기본정보 API로 보강하는 외형 이미지 URL (목록 API에는 없음) */
+  character_image?: string;
+}
+
+export interface CharacterBasicResponse {
+  character_name: string;
+  world_name: string;
+  character_class: string;
+  character_level: number;
+  character_guild_name: string | null;
+  character_image: string;
 }
 
 export interface CharacterListResponse {
@@ -95,6 +106,11 @@ async function request<T>(apiKey: string, path: string, params: Record<string, s
 export async function getCharacterList(apiKey: string): Promise<CharacterSummary[]> {
   const data = await request<CharacterListResponse>(apiKey, '/maplestory/v1/character/list');
   return data.account_list.flatMap((a) => a.character_list);
+}
+
+/** 캐릭터 기본정보 (외형 이미지 등) */
+export function getCharacterBasic(apiKey: string, ocid: string): Promise<CharacterBasicResponse> {
+  return request<CharacterBasicResponse>(apiKey, '/maplestory/v1/character/basic', { ocid });
 }
 
 /** 캐릭터 스케줄러 수행 현황 (본인 계정 캐릭터만 조회 가능). date 미지정 시 실시간 */

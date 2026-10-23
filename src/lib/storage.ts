@@ -1,6 +1,7 @@
 // localStorage 래퍼. 사파리 프라이빗 모드 등에서 접근이 막혀도 앱이 동작하도록 예외를 삼킨다.
 
 import type { CharacterSummary } from '../api/nexon';
+import type { PartySizes } from './progress';
 
 const PREFIX = 'maple-alami:';
 
@@ -27,9 +28,11 @@ export interface Settings {
   tracked: CharacterSummary[];
   /** 인게임 스케줄러에 등록된 항목만 표시 */
   registeredOnly: boolean;
+  /** 캐릭터(ocid)별 보스 파티 인원 */
+  party: Record<string, PartySizes>;
 }
 
-const DEFAULT_SETTINGS: Settings = { apiKey: '', tracked: [], registeredOnly: true };
+const DEFAULT_SETTINGS: Settings = { apiKey: '', tracked: [], registeredOnly: true, party: {} };
 
 export function loadSettings(): Settings {
   return { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>('settings', {}) };

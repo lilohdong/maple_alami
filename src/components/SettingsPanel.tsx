@@ -40,7 +40,12 @@ export function SettingsPanel({ settings, onChange, onDone }: Props) {
 
   const save = () => {
     const pool = characters ?? settings.tracked;
-    onChange({ ...settings, apiKey: apiKey.trim(), tracked: pool.filter((c) => selected.has(c.ocid)) });
+    // 목록 API에는 외형 이미지가 없으니 기존에 받아둔 이미지는 유지 (새 캐릭터는 App에서 보강)
+    const images = new Map(settings.tracked.map((c) => [c.ocid, c.character_image]));
+    const tracked = pool
+      .filter((c) => selected.has(c.ocid))
+      .map((c) => ({ ...c, character_image: c.character_image ?? images.get(c.ocid) }));
+    onChange({ ...settings, apiKey: apiKey.trim(), tracked });
     onDone();
   };
 
