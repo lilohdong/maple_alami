@@ -14,6 +14,7 @@ import {
   interactionUserId,
   modalValue,
   option,
+  listCommands,
   registerCommands,
   ResponseType,
   buttonRow,
@@ -734,13 +735,24 @@ async function routeDiscord(request: Request, env: Env, ctx: ExecutionContext, p
     return handleInteraction(env, ctx, interaction);
   }
 
-  // 슬래시 명령 등록. 항상 같은 명령 목록으로 덮어쓰므로 여러 번 호출해도 무해 (남용 방지로 초대 코드 요구)
-  if (parts[1] === 'setup' && request.method === 'POST') {
-    const code = new URL(request.url).searchParams.get('code') ?? '';
-    if (env.INVITE_CODE && !safeEqual(code, env.INVITE_CODE)) throw new HttpError(403, 'Forbidden');
+  // 슬래시 명령 등록(POST) / 등록된 명령 확인(GET). 남용 방지로 초대 코드 요구
+  if (parts[1] === 'setup' && (request.method === 'POST' || request.method === 'GET')) {
+    const params = new URL(request.url).searchParams;
+    if (env.INVITE_CODE && !safeEqual(params.get('code') ?? '', env.INVITE_CODE)) throw new HttpError(403, 'Forbidden');
     if (!env.DISCORD_BOT_TOKEN) throw new HttpError(400, 'DISCORD_BOT_TOKEN is not set');
-    const res = await registerCommands(env.DISCORD_BOT_TOKEN, env.DISCORD_APP_ID);
-    return json({ ok: res.ok, status: res.status }, res.ok ? 200 : 502);
+
+    if (request.method === 'POST') {
+      // 항상 같은 명령 목록으로 덮어쓰므로 여러 번 호출해도 무해
+      const res = await registerCommands(env.DISCORD_BOT_TOKEN, env.DISCORD_APP_ID);
+      const body = (await res.json().catch(() => null)) as { name: string }[] | { message?: string } | null;
+      return json(
+        { ok: res.ok, status: res.status, commands: Array.isArray(body) ? body.map((c) => c.name) : body },
+        res.ok ? 200 : 502,
+      );
+    }
+    const res = await listCommands(env.DISCORD_BOT_TOKEN, env.DISCORD_APP_ID, params.get('guild') ?? undefined);
+    const body = (await res.json().catch(() => null)) as { name: string }[] | null;
+    return json({ status: res.status, commands: Array.isArray(body) ? body.map((c) => c.name) : body });
   }
 
   throw new HttpError(404, 'Not Found');

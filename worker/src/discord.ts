@@ -144,6 +144,11 @@ export function editOriginalResponse(
   });
 }
 
+export function listCommands(token: string, appId: string, guildId?: string): Promise<Response> {
+  const path = guildId ? `/applications/${appId}/guilds/${guildId}/commands` : `/applications/${appId}/commands`;
+  return fetch(`${API}${path}`, { headers: botHeaders(token) });
+}
+
 export function registerCommands(token: string, appId: string): Promise<Response> {
   return fetch(`${API}/applications/${appId}/commands`, { method: 'PUT', headers: botHeaders(token), body: JSON.stringify(COMMANDS) });
 }
