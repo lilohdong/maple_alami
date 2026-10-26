@@ -395,7 +395,8 @@ async function handleCommand(env: Env, ctx: ExecutionContext, i: Interaction): P
 }
 
 async function routeDiscord(request: Request, env: Env, ctx: ExecutionContext, parts: string[]): Promise<Response> {
-  if (!env.DISCORD_PUBLIC_KEY || !env.DISCORD_APP_ID || !env.DISCORD_BOT_TOKEN) throw new HttpError(404, 'Discord bot is not configured');
+  // 서명 검증(PING 응답 포함)은 공개키만 있으면 가능. 명령 등록과 메시지 전송에는 봇 토큰 필요
+  if (!env.DISCORD_PUBLIC_KEY || !env.DISCORD_APP_ID) throw new HttpError(404, 'Discord bot is not configured');
 
   if (parts[1] === 'interactions' && request.method === 'POST') {
     const body = await request.text();
@@ -416,6 +417,7 @@ async function routeDiscord(request: Request, env: Env, ctx: ExecutionContext, p
   if (parts[1] === 'setup' && request.method === 'POST') {
     const code = new URL(request.url).searchParams.get('code') ?? '';
     if (env.INVITE_CODE && !safeEqual(code, env.INVITE_CODE)) throw new HttpError(403, 'Forbidden');
+    if (!env.DISCORD_BOT_TOKEN) throw new HttpError(400, 'DISCORD_BOT_TOKEN is not set');
     const res = await registerCommands(env.DISCORD_BOT_TOKEN, env.DISCORD_APP_ID);
     return json({ ok: res.ok, status: res.status }, res.ok ? 200 : 502);
   }

@@ -12,6 +12,9 @@ id = "6cc0a42eb1c545e286b37097317a8b5a"
 
 [vars]
 ALLOWED_ORIGINS = "https://maple-alami.pages.dev,http://localhost:5173"
+# 디스코드 봇 (공개값). 봇 토큰은 비밀값 DISCORD_BOT_TOKEN
+DISCORD_APP_ID = "1564164180666486824"
+DISCORD_PUBLIC_KEY = "f4b0a48a780c8f00a3f6ea0750c13ebf7fc292b8a603ca4c180d25fcdafcebd6"
 
 # 비밀값 (wrangler secret put 으로 설정):
 #   ENCRYPTION_KEY  구독 정보 암호화 키 (base64, 32바이트)
