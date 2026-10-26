@@ -202,7 +202,7 @@ function ContentRows({ items }: { items: SchedulerContent[] }) {
             {c.type === 'quest' ? (
               c.quest_state === '1' && !done && <span className="pill">진행 중</span>
             ) : (
-              <span className="count">
+              c.max_count > 0 && <span className="count">
                 {c.max_count > 1 && (
                   <span className="minibar">
                     <span style={{ width: `${Math.min(100, (c.now_count / c.max_count) * 100)}%` }} />
@@ -276,7 +276,11 @@ export function CharacterCard({ character, result, registeredOnly, party, onPart
       <div className="tab-body">
         {v[tab].length === 0 ? (
           <p className="card-msg">
-            {registeredOnly ? '인게임 스케줄러에 등록된 항목이 없습니다.' : '오늘 접속 기록이 없거나 데이터가 없습니다.'}
+            {tab === 'daily' && (data.daily_contents ?? []).length === 0
+              ? '오늘 아직 접속 기록이 없습니다. 게임에 접속하면 일일 숙제가 표시됩니다.'
+              : registeredOnly
+                ? '인게임 스케줄러에 등록된 항목이 없습니다.'
+                : '오늘 접속 기록이 없거나 데이터가 없습니다.'}
           </p>
         ) : tab === 'bosses' ? (
           <BossRows bosses={v.bosses} party={party} overLimit={weeklyIncome(data, party).overLimit} onPartyChange={onPartyChange} />
