@@ -1,12 +1,15 @@
 // 스케줄러 상태로 디스코드 알림 메시지를 만든다.
 // 구성: 요약 임베드 1개 + 남은 할일이 있는 캐릭터별 임베드 (디스코드 제한: 메시지당 임베드 10개)
+// 같은 시각에 보낼 알림 종류가 여럿이면 한 메시지로 합친다.
 
 import type { CharacterStateResponse, SchedulerContent } from '../../src/api/nexon';
 import { formatMeso, normalizeDifficulty } from '../../src/data/crystals';
 import { bossShare, isBossDone, isContentDone, normalizeCycle, type PartySizes } from '../../src/lib/progress';
 import { nextReset, type ResetKind } from '../../src/lib/reset';
 
+/** status: 지금 현황 (보스+일일+주간 전부, 남은 할일이 없어도 전송) */
 export type NotifyKind = 'weeklyBoss' | 'weeklyContent' | 'daily' | 'status';
+export type ScheduledKind = Exclude<NotifyKind, 'status'>;
 
 export interface Prefs {
   weeklyBoss: boolean;
@@ -19,13 +22,13 @@ export const DEFAULT_PREFS: Prefs = { weeklyBoss: true, weeklyContent: true, dai
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 /** 크론 실행 시각(KST)에 보낼 알림 종류 */
-export function dueKinds(scheduledTime: number): NotifyKind[] {
+export function dueKinds(scheduledTime: number): ScheduledKind[] {
   const kst = new Date(scheduledTime + KST_OFFSET_MS);
   const hour = kst.getUTCHours();
   const day = kst.getUTCDay();
-  const kinds: NotifyKind[] = [];
-  if (hour === 18 && day === 3) kinds.push('weeklyBoss'); // 수 18시 → 목 00시 리셋 6시간 전
-  if (hour === 18 && day === 0) kinds.push('weeklyContent'); // 일 18시 → 월 00시 리셋 6시간 전
+  const kinds: ScheduledKind[] = [];
+  // 수 18시: 주간 보스(목 00시 리셋 6시간 전)와 주간 콘텐츠(월 00시 리셋)를 함께
+  if (hour === 18 && day === 3) kinds.push('weeklyBoss', 'weeklyContent');
   if (hour === 22) kinds.push('daily'); // 매일 22시 → 자정 리셋 2시간 전
   return kinds;
 }
@@ -45,16 +48,18 @@ export interface DiscordEmbed {
   timestamp?: string;
 }
 
-const COLOR = { orange: 0xf28c28, green: 0x3ccf8e, gray: 0x4f5563 };
+const COLOR = { orange: 0xf28c28, green: 0x3ccf8e };
 const MAX_EMBEDS = 10;
 const MAX_DESCRIPTION = 4000;
 
-const META: Record<NotifyKind, { title: string; reset?: ResetKind }> = {
-  weeklyBoss: { title: '⚔️ 주간 보스 리셋 알림', reset: 'weeklyBoss' },
-  weeklyContent: { title: '📅 주간 콘텐츠 리셋 알림', reset: 'weeklyContent' },
-  daily: { title: '🌙 일일 콘텐츠 리셋 알림', reset: 'daily' },
-  status: { title: '📋 현재 진행 현황' },
+const META: Record<ScheduledKind, { title: string; resetLabel: string; reset: ResetKind }> = {
+  weeklyBoss: { title: '⚔️ 주간 보스 알림', resetLabel: '⚔️ 주간 보스 리셋', reset: 'weeklyBoss' },
+  weeklyContent: { title: '📅 주간 콘텐츠 알림', resetLabel: '📅 주간 콘텐츠 리셋', reset: 'weeklyContent' },
+  daily: { title: '🌙 일일 콘텐츠 알림', resetLabel: '🌙 일일 리셋', reset: 'daily' },
 };
+
+/** 섹션 표시 순서 */
+const ORDER: ScheduledKind[] = ['weeklyBoss', 'daily', 'weeklyContent'];
 
 const registered = <T extends { registration_flag: string }>(items: T[] | null | undefined) =>
   (items ?? []).filter((i) => i.registration_flag === 'true');
@@ -63,14 +68,11 @@ const hasData = (s: CharacterStateResponse) =>
   (s.boss_contents?.length ?? 0) + (s.daily_contents?.length ?? 0) + (s.weekly_contents?.length ?? 0) > 0;
 
 /** 디스코드가 보는 사람 시간대로 바꿔 보여주는 시각 표기 */
-const discordTime = (ms: number, style: 'R' | 'f' | 't') => `<t:${Math.floor(ms / 1000)}:${style}>`;
+const discordTime = (ms: number, style: 'R' | 'f') => `<t:${Math.floor(ms / 1000)}:${style}>`;
 
 interface Section {
-  /** 섹션 제목 줄 */
   heading: string;
-  /** 남은 항목 줄 */
   lines: string[];
-  /** 요약 집계용 */
   count: number;
   meso: number;
 }
@@ -111,15 +113,15 @@ function contentSection(icon: string, label: string, items: SchedulerContent[] |
   };
 }
 
-function sectionsFor(kind: NotifyKind, s: CharacterStateResponse, party: PartySizes | undefined): Section[] {
-  const daily = () => contentSection('🌙', '일일', s.daily_contents);
-  const weekly = () => contentSection('📅', '주간 콘텐츠', s.weekly_contents);
-  const list =
-    kind === 'weeklyBoss' ? [bossSection(s, party)] :
-    kind === 'weeklyContent' ? [weekly()] :
-    kind === 'daily' ? [daily()] :
-    [bossSection(s, party), daily(), weekly()];
-  return list.filter((x): x is Section => x !== null);
+function section(kind: ScheduledKind, s: CharacterStateResponse, party: PartySizes | undefined): Section | null {
+  switch (kind) {
+    case 'weeklyBoss':
+      return bossSection(s, party);
+    case 'daily':
+      return contentSection('🌙', '일일', s.daily_contents);
+    case 'weeklyContent':
+      return contentSection('📅', '주간 콘텐츠', s.weekly_contents);
+  }
 }
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
@@ -127,21 +129,32 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 function characterEmbed(s: CharacterStateResponse, sections: Section[], image: string | undefined): DiscordEmbed {
   const body = sections.map((sec) => [sec.heading, ...sec.lines.map((l) => `> ${l}`)].join('\n')).join('\n\n');
   return {
-    title: `${s.character_name}`,
+    title: s.character_name,
     description: clip(`Lv.${s.character_level} · ${s.character_class} · ${s.world_name}\n\n${body}`, MAX_DESCRIPTION),
     color: COLOR.orange,
     ...(image ? { thumbnail: { url: image } } : {}),
   };
 }
 
+function titleFor(kinds: ScheduledKind[], isStatus: boolean): string {
+  if (isStatus) return '📋 현재 진행 현황';
+  if (kinds.length === 1) return META[kinds[0]].title;
+  if (kinds.includes('weeklyBoss') && kinds.includes('weeklyContent') && kinds.length === 2) return '⚔️ 주간 숙제 알림';
+  return '🔔 숙제 알림';
+}
+
 /** 남은 할일이 없으면 null (status는 항상 메시지 생성) */
 export function buildEmbeds(
-  kind: NotifyKind,
+  requested: NotifyKind[],
   reports: CharacterReport[],
   party: Record<string, PartySizes>,
   images: Record<string, string> = {},
   now = Date.now(),
 ): DiscordEmbed[] | null {
+  const isStatus = requested.includes('status');
+  const kinds = ORDER.filter((k) => isStatus || requested.includes(k));
+  if (kinds.length === 0) return null;
+
   const pending: DiscordEmbed[] = [];
   const done: string[] = [];
   const notLoggedIn: string[] = [];
@@ -159,7 +172,7 @@ export function buildEmbeds(
       notLoggedIn.push(r.state.character_name);
       continue;
     }
-    const sections = sectionsFor(kind, r.state, party[r.ocid]);
+    const sections = kinds.map((k) => section(k, r.state!, party[r.ocid])).filter((x): x is Section => x !== null);
     if (sections.length === 0) {
       done.push(r.state.character_name);
       continue;
@@ -169,13 +182,15 @@ export function buildEmbeds(
     pending.push(characterEmbed(r.state, sections, images[r.ocid]));
   }
 
-  if (kind !== 'status' && pending.length === 0 && notLoggedIn.length === 0 && failed.length === 0) return null;
+  if (!isStatus && pending.length === 0 && notLoggedIn.length === 0 && failed.length === 0) return null;
 
-  const meta = META[kind];
   const lines: string[] = [];
-  if (meta.reset) {
-    const reset = nextReset(meta.reset, now);
-    lines.push(`리셋 ${discordTime(reset, 'R')} · ${discordTime(reset, 'f')}`, '');
+  if (!isStatus) {
+    for (const k of kinds) {
+      const reset = nextReset(META[k].reset, now);
+      lines.push(`${META[k].resetLabel} ${discordTime(reset, 'R')} · ${discordTime(reset, 'f')}`);
+    }
+    lines.push('');
   }
   if (pending.length > 0) {
     lines.push(`📌 남은 할일 **${count}개**${meso > 0 ? ` · 남은 결정석 **${formatMeso(meso)}**` : ''}`);
@@ -190,7 +205,7 @@ export function buildEmbeds(
   if (pending.length > shown.length) lines.push(`… 외 ${pending.length - shown.length}캐릭터`);
 
   const summary: DiscordEmbed = {
-    title: meta.title,
+    title: titleFor(kinds, isStatus),
     description: clip(lines.join('\n'), MAX_DESCRIPTION),
     color: pending.length > 0 ? COLOR.orange : COLOR.green,
     footer: { text: '메이플 할일 알리미' },

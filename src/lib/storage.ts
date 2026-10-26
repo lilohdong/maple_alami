@@ -39,8 +39,11 @@ export interface Settings {
 export interface NotifySettings {
   id: string;
   token: string;
-  webhookUrl: string;
+  /** 웹훅 방식일 때만 */
+  webhookUrl?: string;
   prefs: NotifyPrefs;
+  /** 봇 방식: 아직 /연결 하지 않았을 때 보여줄 연결 코드 */
+  linkCode?: { code: string; expiresAt: number };
 }
 
 const DEFAULT_SETTINGS: Settings = { apiKey: '', tracked: [], registeredOnly: true, party: {} };

@@ -476,6 +476,30 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
   color: var(--ok);
 }
 .ok-text { color: var(--ok); margin: 0; font-size: 13.5px; }
+.status-pill.waiting { background: var(--accent-soft); color: var(--accent); }
+
+.link-box {
+  width: 100%;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px dashed var(--accent);
+  background: var(--accent-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.link-box p { margin: 0; }
+.link-command {
+  align-self: flex-start;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  user-select: all;
+}
 
 .help { font-size: 13px; color: var(--text-2); margin-top: -4px; }
 .help summary { cursor: pointer; color: var(--accent); font-weight: 600; }

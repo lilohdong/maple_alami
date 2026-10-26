@@ -113,7 +113,7 @@ export default function App() {
     if (DEMO || !sub || notifySyncKey === lastSyncedKey.current) return;
     const timer = setTimeout(() => {
       lastSyncedKey.current = notifySyncKey;
-      updateSubscription(sub, buildPayload(settings, sub.webhookUrl, sub.prefs)).catch(() => {
+      updateSubscription(sub, buildPayload(settings, sub.prefs, sub.webhookUrl)).catch(() => {
         lastSyncedKey.current = ''; // 실패 시 다음 변경 때 재시도
       });
     }, 1500);
