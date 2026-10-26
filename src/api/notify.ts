@@ -18,6 +18,8 @@ export interface SubscriptionPayload {
   webhookUrl: string;
   characters: string[];
   party: Record<string, PartySizes>;
+  /** 디스코드 메시지 썸네일용 캐릭터 외형 이미지 */
+  images: Record<string, string>;
   prefs: NotifyPrefs;
 }
 

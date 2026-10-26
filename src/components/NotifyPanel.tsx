@@ -27,6 +27,7 @@ export function buildPayload(settings: Settings, webhookUrl: string, prefs: Noti
     webhookUrl,
     characters: settings.tracked.map((c) => c.ocid),
     party: settings.party,
+    images: Object.fromEntries(settings.tracked.flatMap((c) => (c.character_image ? [[c.ocid, c.character_image]] : []))),
     prefs,
   };
 }

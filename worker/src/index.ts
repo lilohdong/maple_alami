@@ -5,7 +5,7 @@
 import { getCharacterList, getCharacterState, NexonApiError } from '../../src/api/nexon';
 import type { PartySizes } from '../../src/lib/progress';
 import { decryptJson, encryptJson, randomToken, safeEqual, sha256 } from './crypto';
-import { buildEmbed, DEFAULT_PREFS, dueKinds, type CharacterReport, type DiscordEmbed, type NotifyKind, type Prefs } from './notify';
+import { buildEmbeds, DEFAULT_PREFS, dueKinds, type CharacterReport, type DiscordEmbed, type NotifyKind, type Prefs } from './notify';
 
 interface Env {
   SUBS: KVNamespace;
@@ -21,6 +21,8 @@ interface Subscription {
   webhookUrl: string;
   characters: string[];
   party: Record<string, PartySizes>;
+  /** 캐릭터 외형 이미지 (예전 구독에는 없을 수 있음) */
+  images?: Record<string, string>;
   prefs: Prefs;
   createdAt: string;
 }
@@ -32,12 +34,14 @@ interface SubscriptionInput {
   webhookUrl: string;
   characters: string[];
   party?: Record<string, PartySizes>;
+  images?: Record<string, string>;
   prefs?: Partial<Prefs>;
 }
 
 const MAX_CHARACTERS = 8;
 const REQUEST_GAP_MS = 250;
-const WEBHOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+const NEXON_IMAGE_PREFIX = 'https://open.api.nexon.com/static/maplestory/';
+const WEBHOOK_RE =/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/;
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -115,6 +119,16 @@ function sanitizeParty(party: SubscriptionInput['party'], characters: string[]):
   return out;
 }
 
+/** 디스코드 썸네일용 캐릭터 이미지. 넥슨 이미지 주소만 허용 */
+function sanitizeImages(images: SubscriptionInput['images'], characters: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const ocid of characters) {
+    const url = images?.[ocid];
+    if (typeof url === 'string' && url.length <= 512 && url.startsWith(NEXON_IMAGE_PREFIX)) out[ocid] = url;
+  }
+  return out;
+}
+
 const sanitizePrefs = (p: Partial<Prefs> | undefined): Prefs => ({
   weeklyBoss: p?.weeklyBoss ?? DEFAULT_PREFS.weeklyBoss,
   weeklyContent: p?.weeklyContent ?? DEFAULT_PREFS.weeklyContent,
@@ -136,14 +150,18 @@ async function collectReports(sub: Subscription): Promise<CharacterReport[]> {
   return reports;
 }
 
-/** 보낼 내용이 있으면 전송. 웹훅이 삭제된 경우 'gone' */
+/** 보낼 내용이 있으면 알림 종류별로 메시지 전송. 웹훅이 삭제된 경우 'gone' */
 async function notify(sub: Subscription, kinds: NotifyKind[]): Promise<'sent' | 'skipped' | 'gone'> {
   const reports = await collectReports(sub);
-  const embeds = kinds.map((k) => buildEmbed(k, reports, sub.party)).filter((e): e is DiscordEmbed => e !== null);
-  if (embeds.length === 0) return 'skipped';
-  const res = await sendDiscord(sub.webhookUrl, { embeds });
-  if (res.status === 404 || res.status === 401) return 'gone';
-  return 'sent';
+  let sent = false;
+  for (const kind of kinds) {
+    const embeds = buildEmbeds(kind, reports, sub.party, sub.images ?? {});
+    if (!embeds) continue;
+    const res = await sendDiscord(sub.webhookUrl, { embeds });
+    if (res.status === 404 || res.status === 401) return 'gone';
+    sent = true;
+  }
+  return sent ? 'sent' : 'skipped';
 }
 
 async function runScheduled(env: Env, scheduledTime: number): Promise<void> {
@@ -211,6 +229,7 @@ async function route(request: Request, env: Env): Promise<Response> {
       webhookUrl: input.webhookUrl,
       characters: input.characters,
       party: sanitizeParty(input.party, input.characters),
+      images: sanitizeImages(input.images, input.characters),
       prefs: sanitizePrefs(input.prefs),
       createdAt: new Date().toISOString(),
     });
@@ -232,6 +251,7 @@ async function route(request: Request, env: Env): Promise<Response> {
       webhookUrl: input.webhookUrl,
       characters: input.characters,
       party: sanitizeParty(input.party, input.characters),
+      images: sanitizeImages(input.images, input.characters),
       prefs: sanitizePrefs(input.prefs),
     });
     return json({ ok: true });

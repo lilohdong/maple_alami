@@ -104,7 +104,9 @@ export default function App() {
   }, [refresh]);
 
   // 알림이 켜져 있으면 캐릭터/파티/키 변경을 알림 서버에 반영 (연속 변경은 모아서 한 번)
-  const notifySyncKey = settings.notify ? JSON.stringify([apiKey, trackedIds, settings.party]) : '';
+  const notifySyncKey = settings.notify
+    ? JSON.stringify([apiKey, tracked.map((c) => [c.ocid, c.character_image]), settings.party])
+    : '';
   const lastSyncedKey = useRef(notifySyncKey);
   useEffect(() => {
     const sub = settings.notify;
