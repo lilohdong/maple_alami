@@ -1,9 +1,9 @@
 // 메이플 할일 알리미 알림 Worker
 // - HTTP /subscriptions: 앱에서 알림 구독 등록/조회/수정/삭제/테스트
-// - HTTP /discord/interactions: 디스코드 봇 슬래시 명령 (/연결, /현황, /해제)
+// - HTTP /discord/interactions: 디스코드 봇 슬래시 명령 (/등록, /현황, /설정, /해제, /연결)
 // - Cron: 리셋 전 남은 할일을 디스코드(봇 채널 멘션 또는 웹훅)로 전송
 
-import { getCharacterList, getCharacterState, NexonApiError } from '../../src/api/nexon';
+import { getCharacterBasic, getCharacterList, getCharacterState, NexonApiError } from '../../src/api/nexon';
 import type { PartySizes } from '../../src/lib/progress';
 import { decryptJson, encryptJson, randomToken, safeEqual, sha256 } from './crypto';
 import {
@@ -11,10 +11,13 @@ import {
   EPHEMERAL,
   InteractionType,
   interactionUserId,
+  modalValue,
   option,
   registerCommands,
   ResponseType,
+  selectRow,
   sendChannelMessage,
+  textModal,
   verifyInteraction,
   type Interaction,
 } from './discord';
@@ -345,12 +348,72 @@ async function routeSubscriptions(request: Request, env: Env, parts: string[]): 
 
 // ---------- 디스코드 봇 ----------
 
-const reply = (content: string, ephemeral = true) =>
-  json({ type: ResponseType.MESSAGE, data: { content, flags: ephemeral ? EPHEMERAL : 0, allowed_mentions: { parse: [] } } });
+/** /등록 중간 단계: API 키 입력 후 캐릭터 고르기 전까지 임시 보관 */
+interface PendingRegistration {
+  apiKey: string;
+  channelId: string;
+  guildId?: string;
+}
 
-async function handleCommand(env: Env, ctx: ExecutionContext, i: Interaction): Promise<Response> {
-  const userId = interactionUserId(i);
+const PENDING_TTL_SEC = 15 * 60;
+const pendingKey = (userId: string) => `pending:${userId}`;
+
+const CUSTOM_ID = { registerModal: 'register', apiKeyInput: 'api_key', pickCharacters: 'pick_characters', prefs: 'prefs' } as const;
+
+const PREF_OPTIONS: { key: keyof Prefs; label: string; description: string }[] = [
+  { key: 'weeklyBoss', label: '주간 보스', description: '수요일 18:00 · 목요일 리셋 6시간 전' },
+  { key: 'weeklyContent', label: '주간 콘텐츠', description: '수요일 18:00 · 주간 보스 알림과 함께' },
+  { key: 'daily', label: '일일 콘텐츠', description: '매일 22:00 · 자정 리셋 2시간 전' },
+];
+
+const reply = (content: string, ephemeral = true, components?: unknown[]) =>
+  json({
+    type: ResponseType.MESSAGE,
+    data: { content, flags: ephemeral ? EPHEMERAL : 0, allowed_mentions: { parse: [] }, ...(components ? { components } : {}) },
+  });
+
+/** 선택 메뉴로 띄운 메시지를 결과 문구로 교체 */
+const updateMessage = (content: string) => json({ type: ResponseType.UPDATE_MESSAGE, data: { content, components: [] } });
+
+async function findUserSub(env: Env, userId: string): Promise<{ id: string; sub: Subscription } | null> {
+  const id = await env.SUBS.get(userKey(userId));
+  const sub = id ? await loadSub(env, id) : null;
+  return id && sub ? { id, sub } : null;
+}
+
+/** 사람당 구독 하나: 새 구독을 이 사람에게 연결하고 예전 것은 해지 */
+async function bindUser(env: Env, userId: string, id: string): Promise<void> {
+  const previous = await env.SUBS.get(userKey(userId));
+  if (previous && previous !== id) await deleteSub(env, previous, await loadSub(env, previous));
+  await env.SUBS.put(userKey(userId), id);
+}
+
+/** 디스코드 썸네일용 캐릭터 이미지를 받아 저장 (응답 후 백그라운드) */
+async function fillImages(env: Env, id: string): Promise<void> {
+  const sub = await loadSub(env, id);
+  if (!sub) return;
+  const images: Record<string, string> = { ...sub.images };
+  for (const [i, ocid] of sub.characters.entries()) {
+    if (i > 0) await sleep(REQUEST_GAP_MS);
+    try {
+      images[ocid] = (await getCharacterBasic(sub.apiKey, ocid)).character_image;
+    } catch {
+      /* 이미지 없이 진행 */
+    }
+  }
+  await saveSub(env, id, { ...sub, images: sanitizeImages(images, sub.characters) });
+}
+
+async function handleCommand(env: Env, ctx: ExecutionContext, i: Interaction, userId: string): Promise<Response> {
   const name = i.data?.name;
+
+  if (name === '등록') {
+    if (!i.channel_id || !i.guild_id) return reply('❌ 알림 받을 서버 채널에서 실행해주세요.');
+    return json({
+      type: ResponseType.MODAL,
+      data: textModal(CUSTOM_ID.registerModal, '메이플 할일 알리미 등록', CUSTOM_ID.apiKeyInput, 'NEXON Open API 키', 'openapi.nexon.com에서 발급한 키를 붙여넣으세요'),
+    });
+  }
 
   if (name === '연결') {
     const code = String(option(i, '코드') ?? '').trim().toUpperCase();
@@ -360,38 +423,141 @@ async function handleCommand(env: Env, ctx: ExecutionContext, i: Interaction): P
     if (!sub) return reply('❌ 알림 등록 정보를 찾을 수 없습니다. 앱에서 알림을 다시 켜주세요.');
     if (!i.channel_id) return reply('❌ 서버 채널에서 실행해주세요.');
 
-    // 같은 사람이 예전에 연결한 구독은 해지 (사람당 하나)
-    const previous = await env.SUBS.get(userKey(userId));
-    if (previous && previous !== id) await deleteSub(env, previous, await loadSub(env, previous));
-
     await saveSub(env, id, { ...sub, webhookUrl: undefined, discord: { userId, channelId: i.channel_id, guildId: i.guild_id } });
-    await env.SUBS.put(userKey(userId), id);
+    await bindUser(env, userId, id);
     await env.SUBS.delete(codeKey(code));
     return reply(`✅ 연결되었습니다! 이제 이 채널에서 <@${userId}>님을 멘션해 알림을 보내드려요.\n\`/현황\`으로 언제든 현재 숙제 현황을 볼 수 있습니다.`);
   }
 
   if (name === '현황') {
-    const id = await env.SUBS.get(userKey(userId));
-    const sub = id ? await loadSub(env, id) : null;
-    if (!sub) return reply('아직 연결되지 않았습니다. 앱의 🔔 알림 설정에서 받은 코드로 `/연결`을 먼저 실행해주세요.');
+    const found = await findUserSub(env, userId);
+    if (!found) return reply('아직 등록되지 않았습니다. `/등록`으로 먼저 API 키를 등록해주세요.');
     // 넥슨 API 조회가 3초를 넘길 수 있어 먼저 "생각 중" 응답 후 내용을 채움
     ctx.waitUntil(
       (async () => {
-        const embeds = await buildFor(sub, ['status']);
+        const embeds = await buildFor(found.sub, ['status']);
         await editOriginalResponse(i.application_id, i.token, embeds ? { embeds } : { content: '조회 결과가 없습니다.' });
       })().catch((e) => console.error('status command failed', e)),
     );
     return json({ type: ResponseType.DEFERRED_MESSAGE });
   }
 
+  if (name === '설정') {
+    const found = await findUserSub(env, userId);
+    if (!found) return reply('아직 등록되지 않았습니다. `/등록`으로 먼저 API 키를 등록해주세요.');
+    const options = PREF_OPTIONS.map((p) => ({ label: p.label, value: p.key, description: p.description, default: found.sub.prefs[p.key] }));
+    return reply('받을 알림을 골라주세요. (모두 해제하면 정기 알림이 오지 않습니다)', true, [
+      selectRow(CUSTOM_ID.prefs, '받을 알림 선택', options, 0, options.length),
+    ]);
+  }
+
   if (name === '해제') {
-    const id = await env.SUBS.get(userKey(userId));
-    if (!id) return reply('연결된 알림이 없습니다.');
-    await deleteSub(env, id, await loadSub(env, id));
+    const found = await findUserSub(env, userId);
+    if (!found) return reply('등록된 알림이 없습니다.');
+    await deleteSub(env, found.id, found.sub);
     return reply('🔕 알림을 껐습니다. 저장된 API 키도 삭제되었습니다.');
   }
 
   return reply('알 수 없는 명령입니다.');
+}
+
+/** /등록 모달 제출: 키 확인 → 캐릭터 선택 메뉴 */
+async function handleRegisterModal(env: Env, ctx: ExecutionContext, i: Interaction, userId: string): Promise<Response> {
+  const apiKey = modalValue(i, CUSTOM_ID.apiKeyInput).trim();
+  if (!i.channel_id) return reply('❌ 서버 채널에서 실행해주세요.');
+  const channelId = i.channel_id;
+
+  ctx.waitUntil(
+    (async () => {
+      let characters;
+      try {
+        characters = await getCharacterList(apiKey);
+      } catch (e) {
+        await editOriginalResponse(i.application_id, i.token, {
+          content: `❌ ${e instanceof NexonApiError ? e.message : '넥슨 API 확인에 실패했습니다.'} 키를 확인하고 \`/등록\`을 다시 실행해주세요.`,
+        });
+        return;
+      }
+      if (characters.length === 0) {
+        await editOriginalResponse(i.application_id, i.token, { content: '❌ 이 계정에 캐릭터가 없습니다.' });
+        return;
+      }
+      const pending: PendingRegistration = { apiKey, channelId, guildId: i.guild_id };
+      await env.SUBS.put(pendingKey(userId), await encryptJson(env.ENCRYPTION_KEY, pending), { expirationTtl: PENDING_TTL_SEC });
+
+      characters.sort((a, b) => b.character_level - a.character_level);
+      const options = characters.map((c) => ({
+        label: c.character_name,
+        value: c.ocid,
+        description: `Lv.${c.character_level} ${c.character_class} · ${c.world_name}`,
+      }));
+      const note = characters.length > 25 ? '\n(레벨 높은 순 25개만 표시됩니다)' : '';
+      await editOriginalResponse(i.application_id, i.token, {
+        content: `✅ API 키 확인 완료! 알림 받을 캐릭터를 최대 ${MAX_CHARACTERS}개 골라주세요.${note}`,
+        components: [selectRow(CUSTOM_ID.pickCharacters, '캐릭터 선택', options, 1, MAX_CHARACTERS)],
+      });
+    })().catch((e) => console.error('register modal failed', e)),
+  );
+  // 본인에게만 보이는 "생각 중" 응답
+  return json({ type: ResponseType.DEFERRED_MESSAGE, data: { flags: EPHEMERAL } });
+}
+
+/** 캐릭터 선택 완료: 구독 생성 */
+async function handlePickCharacters(env: Env, ctx: ExecutionContext, i: Interaction, userId: string): Promise<Response> {
+  const raw = await env.SUBS.get(pendingKey(userId));
+  if (!raw) return updateMessage('❌ 시간이 지나 등록이 취소되었습니다. `/등록`을 다시 실행해주세요.');
+  const pending = await decryptJson<PendingRegistration>(env.ENCRYPTION_KEY, raw);
+  const characters = (i.data?.values ?? []).slice(0, MAX_CHARACTERS);
+  if (characters.length === 0) return updateMessage('❌ 캐릭터를 하나 이상 골라주세요. `/등록`을 다시 실행해주세요.');
+
+  const id = randomToken(12);
+  await saveSub(env, id, {
+    // 웹앱 관리용 토큰은 발급하지 않음 (디스코드 명령으로 관리)
+    tokenHash: await sha256(randomToken()),
+    apiKey: pending.apiKey,
+    discord: { userId, channelId: pending.channelId, guildId: pending.guildId },
+    characters,
+    party: {},
+    images: {},
+    prefs: { ...DEFAULT_PREFS },
+    createdAt: new Date().toISOString(),
+  });
+  await bindUser(env, userId, id);
+  await env.SUBS.delete(pendingKey(userId));
+  ctx.waitUntil(fillImages(env, id).catch((e) => console.error('fill images failed', e)));
+
+  return updateMessage(
+    [
+      `✅ 등록 완료! 캐릭터 ${characters.length}개의 알림을 이 채널(<#${pending.channelId}>)에서 멘션으로 보내드려요.`,
+      '',
+      '• 수요일 18:00 — 주간 보스·주간 콘텐츠',
+      '• 매일 22:00 — 일일 콘텐츠',
+      '',
+      '`/현황` 지금 현황 보기 · `/설정` 알림 종류 고르기 · `/해제` 알림 끄기',
+    ].join('\n'),
+  );
+}
+
+async function handlePrefs(env: Env, i: Interaction, userId: string): Promise<Response> {
+  const found = await findUserSub(env, userId);
+  if (!found) return updateMessage('등록된 알림이 없습니다.');
+  const chosen = new Set(i.data?.values ?? []);
+  const prefs: Prefs = { weeklyBoss: chosen.has('weeklyBoss'), weeklyContent: chosen.has('weeklyContent'), daily: chosen.has('daily') };
+  await saveSub(env, found.id, { ...found.sub, prefs });
+  const on = PREF_OPTIONS.filter((p) => prefs[p.key]).map((p) => p.label);
+  return updateMessage(on.length > 0 ? `✅ 저장했습니다: ${on.join(', ')}` : '✅ 저장했습니다. 정기 알림을 모두 껐습니다. (`/현황`은 계속 쓸 수 있어요)');
+}
+
+async function handleInteraction(env: Env, ctx: ExecutionContext, i: Interaction): Promise<Response> {
+  const userId = interactionUserId(i);
+  if (!userId) return reply('알 수 없는 사용자입니다.');
+  if (!env.DISCORD_BOT_TOKEN) return reply('봇 설정이 아직 끝나지 않았습니다. 관리자에게 문의해주세요.');
+
+  if (i.type === InteractionType.APPLICATION_COMMAND) return handleCommand(env, ctx, i, userId);
+  if (i.type === InteractionType.MODAL_SUBMIT && i.data?.custom_id === CUSTOM_ID.registerModal) return handleRegisterModal(env, ctx, i, userId);
+  if (i.type === InteractionType.MESSAGE_COMPONENT && i.data?.custom_id === CUSTOM_ID.pickCharacters) return handlePickCharacters(env, ctx, i, userId);
+  if (i.type === InteractionType.MESSAGE_COMPONENT && i.data?.custom_id === CUSTOM_ID.prefs) return handlePrefs(env, i, userId);
+  return reply('지원하지 않는 요청입니다.');
 }
 
 async function routeDiscord(request: Request, env: Env, ctx: ExecutionContext, parts: string[]): Promise<Response> {
@@ -409,8 +575,7 @@ async function routeDiscord(request: Request, env: Env, ctx: ExecutionContext, p
     if (!ok) return new Response('invalid request signature', { status: 401 });
     const interaction = JSON.parse(body) as Interaction;
     if (interaction.type === InteractionType.PING) return json({ type: ResponseType.PONG });
-    if (interaction.type === InteractionType.APPLICATION_COMMAND) return handleCommand(env, ctx, interaction);
-    return reply('지원하지 않는 요청입니다.');
+    return handleInteraction(env, ctx, interaction);
   }
 
   // 슬래시 명령 등록. 항상 같은 명령 목록으로 덮어쓰므로 여러 번 호출해도 무해 (남용 방지로 초대 코드 요구)

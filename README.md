@@ -63,5 +63,5 @@ API 키는 브라우저 localStorage에 저장되며 넥슨 API로만 전송됩�
 ## 로드맵
 
 - [x] 1단계: 서버 없는 PWA 대시보드
-- [x] 2단계: Cloudflare Worker 크론 + 디스코드 알림
+- [x] 2단계: Cloudflare Worker 크론 + 디스코드 알림 (봇 /등록 /현황 /설정 /해제 /연결, 웹훅)
 - [ ] 3단계: NEXON Open ID 로그인 (넥슨 프렌즈 승인 필요)

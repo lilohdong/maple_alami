@@ -200,6 +200,11 @@ export function NotifyPanel({ settings, onChange }: Props) {
       {/* 1. 아직 안 켬 */}
       {!sub && (
         <>
+          {BOT_MODE && (
+            <p className="hint">
+              💡 봇이 있는 디스코드 서버에서 <code>/등록</code>을 입력하면 이 앱 없이 디스코드에서 바로 등록할 수도 있습니다.
+            </p>
+          )}
           {!BOT_MODE && webhookField}
           <label className="field">
             <span>초대 코드</span>
