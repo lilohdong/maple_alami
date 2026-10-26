@@ -9,7 +9,7 @@ const API = 'https://discord.com/api/v10';
 export const BOT_PERMISSIONS = 1024 + 2048 + 16384;
 
 export const InteractionType = { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COMPONENT: 3, MODAL_SUBMIT: 5 } as const;
-export const ResponseType = { PONG: 1, MESSAGE: 4, DEFERRED_MESSAGE: 5, UPDATE_MESSAGE: 7, MODAL: 9 } as const;
+export const ResponseType = { PONG: 1, MESSAGE: 4, DEFERRED_MESSAGE: 5, DEFERRED_UPDATE: 6, UPDATE_MESSAGE: 7, MODAL: 9 } as const;
 export const EPHEMERAL = 64;
 
 interface ComponentData {
@@ -56,6 +56,7 @@ export const COMMANDS = [
   { name: '등록', description: 'API 키로 메이플 할일 알림을 등록합니다 (이 채널로 알림)' },
   { name: '현황', description: '내 캐릭터들의 현재 숙제 현황을 보여줍니다' },
   { name: '설정', description: '받을 알림 종류를 고릅니다' },
+  { name: '파티', description: '보스별 파티 인원을 설정합니다 (결정석을 인원수로 나눠 계산)' },
   { name: '해제', description: '디스코드 알림을 끄고 저장된 API 키를 삭제합니다' },
   {
     name: '연결',
@@ -81,6 +82,11 @@ export function selectRow(customId: string, placeholder: string, options: Select
     type: 1,
     components: [{ type: 3, custom_id: customId, placeholder, min_values: min, max_values: Math.min(max, opts.length), options: opts }],
   };
+}
+
+/** 회색 버튼 한 줄 */
+export function buttonRow(buttons: { customId: string; label: string }[]) {
+  return { type: 1, components: buttons.map((b) => ({ type: 2, style: 2, custom_id: b.customId, label: b.label })) };
 }
 
 /** 텍스트 한 칸짜리 모달 */

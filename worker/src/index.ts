@@ -4,7 +4,8 @@
 // - Cron: 리셋 전 남은 할일을 디스코드(봇 채널 멘션 또는 웹훅)로 전송
 
 import { getCharacterBasic, getCharacterList, getCharacterState, NexonApiError } from '../../src/api/nexon';
-import type { PartySizes } from '../../src/lib/progress';
+import { bossKey, crystalPrice, formatMeso, normalizeDifficulty } from '../../src/data/crystals';
+import { normalizeCycle, type PartySizes } from '../../src/lib/progress';
 import { decryptJson, encryptJson, randomToken, safeEqual, sha256 } from './crypto';
 import {
   editOriginalResponse,
@@ -15,6 +16,7 @@ import {
   option,
   registerCommands,
   ResponseType,
+  buttonRow,
   selectRow,
   sendChannelMessage,
   textModal,
@@ -451,6 +453,13 @@ async function handleCommand(env: Env, ctx: ExecutionContext, i: Interaction, us
     ]);
   }
 
+  if (name === '파티') {
+    const found = await findUserSub(env, userId);
+    if (!found) return reply('아직 등록되지 않았습니다. `/등록`으로 먼저 API 키를 등록해주세요.');
+    fillLater(ctx, i, () => partyCharacterPanel(found.sub));
+    return json({ type: ResponseType.DEFERRED_MESSAGE, data: { flags: EPHEMERAL } });
+  }
+
   if (name === '해제') {
     const found = await findUserSub(env, userId);
     if (!found) return reply('등록된 알림이 없습니다.');
@@ -548,15 +557,162 @@ async function handlePrefs(env: Env, i: Interaction, userId: string): Promise<Re
   return updateMessage(on.length > 0 ? `✅ 저장했습니다: ${on.join(', ')}` : '✅ 저장했습니다. 정기 알림을 모두 껐습니다. (`/현황`은 계속 쓸 수 있어요)');
 }
 
+// ---------- /파티: 보스별 파티 인원 ----------
+// 캐릭터 선택 → 보스 선택(여러 개) → 인원 선택. 단계 사이 상태는 custom_id와 KV(partypick)에 보관
+
+const PARTY = { char: 'party_char', boss: 'party_boss', size: 'party_size', again: 'party_again' } as const;
+const PARTY_PICK_TTL_SEC = 10 * 60;
+const partyPickKey = (userId: string) => `partypick:${userId}`;
+
+interface PartyPick {
+  ocid: string;
+  name: string;
+  keys: string[];
+  labels: string[];
+}
+
+interface PanelContent {
+  content: string;
+  components: unknown[];
+}
+
+async function partyCharacterPanel(sub: Subscription): Promise<PanelContent> {
+  if (sub.characters.length === 1) return partyBossPanel(sub, sub.characters[0]);
+  const names = new Map<string, { name: string; desc: string }>();
+  try {
+    for (const c of await getCharacterList(sub.apiKey)) {
+      names.set(c.ocid, { name: c.character_name, desc: `Lv.${c.character_level} ${c.character_class} · ${c.world_name}` });
+    }
+  } catch {
+    /* 이름 없이 진행 */
+  }
+  const options = sub.characters.map((ocid, idx) => ({
+    label: names.get(ocid)?.name ?? `캐릭터 ${idx + 1}`,
+    value: ocid,
+    description: names.get(ocid)?.desc,
+  }));
+  return { content: '파티 인원을 설정할 캐릭터를 골라주세요.', components: [selectRow(PARTY.char, '캐릭터 선택', options, 1, 1)] };
+}
+
+async function partyBossPanel(sub: Subscription, ocid: string): Promise<PanelContent> {
+  let state;
+  try {
+    state = await getCharacterState(sub.apiKey, ocid);
+  } catch (e) {
+    return { content: `❌ ${e instanceof NexonApiError ? e.message : '캐릭터 정보를 불러오지 못했습니다.'}`, components: [] };
+  }
+  const party = sub.party[ocid] ?? {};
+  const seen = new Set<string>();
+  const bosses = (state.boss_contents ?? [])
+    .filter((b) => b.registration_flag === 'true')
+    .filter((b) => normalizeCycle(b.cycle) !== 'daily')
+    .flatMap((b) => {
+      const key = bossKey(b.content_name, b.difficulty);
+      const price = crystalPrice(b.content_name, b.difficulty);
+      if (price === null || seen.has(key)) return [];
+      seen.add(key);
+      return [{ key, label: `${normalizeDifficulty(b.difficulty)} ${b.content_name}`, price, size: party[key] ?? 1 }];
+    })
+    .sort((a, b) => b.price - a.price);
+
+  if (bosses.length === 0) {
+    return { content: `**${state.character_name}**: 스케줄러에 등록된 주간/월간 보스가 없습니다. 오늘 접속하지 않았다면 접속 후 다시 시도해주세요.`, components: [] };
+  }
+  const options = bosses.map((b) => ({
+    label: b.label,
+    value: b.key,
+    description: `현재 ${b.size}인 · 내 몫 ${formatMeso(Math.floor(b.price / b.size))} (전체 ${formatMeso(b.price)})`,
+  }));
+  return {
+    content: `**${state.character_name}** · 파티 인원을 바꿀 보스를 골라주세요. (여러 개 선택 가능)`,
+    components: [selectRow(`${PARTY.boss}:${ocid}:${state.character_name}`.slice(0, 100), '보스 선택', options, 1, options.length)],
+  };
+}
+
+const PARTY_SIZE_OPTIONS = [1, 2, 3, 4, 5, 6].map((n) => ({
+  label: `${n}인`,
+  value: String(n),
+  description: n === 1 ? '솔로 (결정석 전부)' : `결정석 1/${n}`,
+}));
+
+/** 지연 응답 후 원래 메시지를 패널 내용으로 교체 */
+function fillLater(ctx: ExecutionContext, i: Interaction, build: () => Promise<PanelContent>): void {
+  ctx.waitUntil(
+    build()
+      .then((panel) => editOriginalResponse(i.application_id, i.token, panel))
+      .catch((e) => console.error('party panel failed', e)),
+  );
+}
+
+async function handlePartyComponent(env: Env, ctx: ExecutionContext, i: Interaction, userId: string, customId: string): Promise<Response> {
+  const found = await findUserSub(env, userId);
+  if (!found) return updateMessage('등록된 알림이 없습니다. `/등록`을 먼저 실행해주세요.');
+  const { id, sub } = found;
+  const [kind, ocid, name] = customId.split(':');
+
+  // 캐릭터 선택 또는 "다른 보스 설정" 버튼 → 보스 목록 (넥슨 조회가 있어 지연 응답)
+  if (kind === PARTY.char || kind === PARTY.again) {
+    const target = kind === PARTY.char ? i.data?.values?.[0] ?? '' : ocid;
+    if (!sub.characters.includes(target)) return updateMessage('❌ 등록된 캐릭터가 아닙니다.');
+    fillLater(ctx, i, () => partyBossPanel(sub, target));
+    return json({ type: ResponseType.DEFERRED_UPDATE });
+  }
+
+  // 보스 선택 → 인원 선택
+  if (kind === PARTY.boss) {
+    if (!sub.characters.includes(ocid)) return updateMessage('❌ 등록된 캐릭터가 아닙니다.');
+    const keys = (i.data?.values ?? []).slice(0, 25);
+    const pick: PartyPick = { ocid, name: name ?? '', keys, labels: keys.map((k) => k.split('|').reverse().join(' ')) };
+    await env.SUBS.put(partyPickKey(userId), JSON.stringify(pick), { expirationTtl: PARTY_PICK_TTL_SEC });
+    return json({
+      type: ResponseType.UPDATE_MESSAGE,
+      data: {
+        content: `**${pick.name}** · ${pick.labels.join(', ')}\n몇 명이서 잡나요?`,
+        components: [selectRow(PARTY.size, '파티 인원 선택', PARTY_SIZE_OPTIONS, 1, 1)],
+      },
+    });
+  }
+
+  // 인원 선택 → 저장
+  if (kind === PARTY.size) {
+    const raw = await env.SUBS.get(partyPickKey(userId));
+    if (!raw) return updateMessage('❌ 시간이 지나 취소되었습니다. `/파티`를 다시 실행해주세요.');
+    const pick = JSON.parse(raw) as PartyPick;
+    const size = Number(i.data?.values?.[0]);
+    if (!Number.isInteger(size) || size < 1 || size > 6 || !sub.characters.includes(pick.ocid)) return updateMessage('❌ 잘못된 선택입니다.');
+
+    const sizes = { ...sub.party[pick.ocid] };
+    for (const key of pick.keys) {
+      if (size === 1) delete sizes[key];
+      else sizes[key] = size;
+    }
+    await saveSub(env, id, { ...sub, party: sanitizeParty({ ...sub.party, [pick.ocid]: sizes }, sub.characters) });
+    await env.SUBS.delete(partyPickKey(userId));
+    return json({
+      type: ResponseType.UPDATE_MESSAGE,
+      data: {
+        content: `✅ **${pick.name}** · ${pick.labels.join(', ')} → **${size}인**으로 저장했습니다.\n남은 결정석 계산과 알림에 바로 반영됩니다.`,
+        components: [buttonRow([{ customId: `${PARTY.again}:${pick.ocid}`, label: '다른 보스 설정' }])],
+      },
+    });
+  }
+
+  return updateMessage('지원하지 않는 요청입니다.');
+}
+
 async function handleInteraction(env: Env, ctx: ExecutionContext, i: Interaction): Promise<Response> {
   const userId = interactionUserId(i);
   if (!userId) return reply('알 수 없는 사용자입니다.');
   if (!env.DISCORD_BOT_TOKEN) return reply('봇 설정이 아직 끝나지 않았습니다. 관리자에게 문의해주세요.');
 
+  const customId = i.data?.custom_id ?? '';
   if (i.type === InteractionType.APPLICATION_COMMAND) return handleCommand(env, ctx, i, userId);
-  if (i.type === InteractionType.MODAL_SUBMIT && i.data?.custom_id === CUSTOM_ID.registerModal) return handleRegisterModal(env, ctx, i, userId);
-  if (i.type === InteractionType.MESSAGE_COMPONENT && i.data?.custom_id === CUSTOM_ID.pickCharacters) return handlePickCharacters(env, ctx, i, userId);
-  if (i.type === InteractionType.MESSAGE_COMPONENT && i.data?.custom_id === CUSTOM_ID.prefs) return handlePrefs(env, i, userId);
+  if (i.type === InteractionType.MODAL_SUBMIT && customId === CUSTOM_ID.registerModal) return handleRegisterModal(env, ctx, i, userId);
+  if (i.type === InteractionType.MESSAGE_COMPONENT) {
+    if (customId === CUSTOM_ID.pickCharacters) return handlePickCharacters(env, ctx, i, userId);
+    if (customId === CUSTOM_ID.prefs) return handlePrefs(env, i, userId);
+    if (customId.startsWith('party_')) return handlePartyComponent(env, ctx, i, userId, customId);
+  }
   return reply('지원하지 않는 요청입니다.');
 }
 
