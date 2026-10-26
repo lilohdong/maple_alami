@@ -8,7 +8,10 @@ NEXON Open API의 [스케줄러 API](https://openapi.nexon.com/ko/game/maplestor
 npm install
 npm run dev      # 개발 서버
 npm run build    # dist/ 에 정적 파일 생성
+npm run deploy   # 빌드 후 Cloudflare Pages 배포 (최초 1회 npx wrangler login 필요)
 ```
+
+배포 주소: https://maple-alami.pages.dev (데모: `/?demo`)
 
 ## 사용법
 
