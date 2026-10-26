@@ -57,15 +57,23 @@ export function bossShare(b: SchedulerBoss, party: PartySizes | undefined): numb
 export interface Income {
   /** 이번 주 처치한 주간 보스 결정석 합 */
   earned: number;
-  /** 스케줄러에 등록한 주간 보스를 모두 잡았을 때 */
+  /** 남은 처치 횟수 안에서 더 벌 수 있는 결정석 (등록했지만 아직 안 잡은 보스 중 비싼 순) */
+  remaining: number;
+  /** earned + remaining */
   expected: number;
+  /** 남은 처치 횟수 (주간 처치 제한 - 이번 주 처치 수) */
+  slots: number;
+  /** 등록했지만 남은 처치 횟수 밖이라 수익에 안 들어가는 보스 (bossKey) */
+  overLimit: Set<string>;
   /** 가격표에 없는 보스 수 (합계에서 제외됨) */
   unknown: number;
 }
 
 /**
- * 주간 보스 결정석 수익. 캐릭터당 판매 제한(limit)이 있어 가치가 높은 순으로 limit 개까지만 합산.
- * 일간/월간 보스는 주간 판매 제한과 별개라 제외.
+ * 주간 보스 결정석 수익.
+ * 주간 보스는 캐릭터당 limit(12)번까지만 잡을/팔 수 있고, 이미 잡은 보스도 그 횟수를 차지한다.
+ * 그래서 남은 수익 = 아직 안 잡은 등록 보스 중 비싼 순으로 (limit - 이번 주 처치 수)개.
+ * 일간/월간 보스는 주간 제한과 별개라 제외.
  */
 export function weeklyIncome(s: CharacterStateResponse, party: PartySizes | undefined): Income {
   const limit = s.weekly_boss_clear_limit_count || DEFAULT_WEEKLY_CRYSTAL_LIMIT;
@@ -79,16 +87,22 @@ export function weeklyIncome(s: CharacterStateResponse, party: PartySizes | unde
     }
     return [{ b, v }];
   });
-  const topSum = (items: typeof valued) =>
-    items
-      .map((i) => i.v)
-      .sort((a, b) => b - a)
-      .slice(0, limit)
-      .reduce((a, b) => a + b, 0);
+  const byValue = (items: typeof valued) => [...items].sort((a, b) => b.v - a.v);
+  const sum = (items: typeof valued) => items.reduce((n, i) => n + i.v, 0);
+
+  const done = byValue(valued.filter((i) => isBossDone(i.b)));
+  const earned = sum(done.slice(0, limit));
+  const cleared = Math.max(s.weekly_boss_clear_count ?? 0, done.length);
+  const slots = Math.max(0, limit - cleared);
+
+  const left = byValue(valued.filter((i) => i.b.registration_flag === 'true' && !isBossDone(i.b)));
+  const remaining = sum(left.slice(0, slots));
   return {
-    earned: topSum(valued.filter((i) => isBossDone(i.b))),
-    // 등록 안 했어도 이미 잡은 보스는 수익에 포함
-    expected: topSum(valued.filter((i) => i.b.registration_flag === 'true' || isBossDone(i.b))),
+    earned,
+    remaining,
+    expected: earned + remaining,
+    slots,
+    overLimit: new Set(left.slice(slots).map((i) => bossKey(i.b.content_name, i.b.difficulty))),
     unknown,
   };
 }

@@ -199,7 +199,7 @@ export default function App() {
               <span className={mesoRatio >= 1 ? 'full' : ''} style={{ width: `${mesoRatio * 100}%` }} />
             </div>
             <span className="meso-note">
-              스케줄러 등록 주간 보스 기준 · 캐릭터당 상위 12개 · {CRYSTAL_PRICE_AS_OF} 가격
+              잡은 보스 + 남은 처치 횟수(주 12회) 안에서 비싼 등록 보스 기준 · {CRYSTAL_PRICE_AS_OF} 가격
             </span>
           </div>
           <div className="progress-card">

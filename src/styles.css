@@ -405,6 +405,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
   font-variant-numeric: tabular-nums;
 }
 .row.done .price { color: var(--ok); }
+.price.over { color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: help; }
 
 .party {
   flex-shrink: 0;

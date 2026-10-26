@@ -131,7 +131,18 @@ function PartySelect({ boss, party, onChange }: { boss: SchedulerBoss; party: Pa
   );
 }
 
-function BossRows({ bosses, party, onPartyChange }: { bosses: SchedulerBoss[]; party: PartySizes | undefined; onPartyChange: Props['onPartyChange'] }) {
+function BossRows({
+  bosses,
+  party,
+  overLimit,
+  onPartyChange,
+}: {
+  bosses: SchedulerBoss[];
+  party: PartySizes | undefined;
+  /** 남은 주간 처치 횟수 밖이라 수익에 안 들어가는 보스 */
+  overLimit: Set<string>;
+  onPartyChange: Props['onPartyChange'];
+}) {
   const groups = new Map<BossCycle, SchedulerBoss[]>();
   for (const b of bosses) {
     const cycle = normalizeCycle(b.cycle);
@@ -150,6 +161,7 @@ function BossRows({ bosses, party, onPartyChange }: { bosses: SchedulerBoss[]; p
             <ul className="rows">
               {groups.get(cycle)!.map((b) => {
                 const share = cycle === 'daily' ? null : bossShare(b, party);
+                const over = cycle === 'weekly' && overLimit.has(bossKey(b.content_name, b.difficulty));
                 return (
                   <li key={`${b.content_name}-${b.difficulty}`} className={isBossDone(b) ? 'row done' : 'row'}>
                     <CheckIcon done={isBossDone(b)} />
@@ -160,7 +172,12 @@ function BossRows({ bosses, party, onPartyChange }: { bosses: SchedulerBoss[]; p
                     {share !== null && (
                       <>
                         <PartySelect boss={b} party={party} onChange={onPartyChange} />
-                        <span className="price">{formatMeso(share)}</span>
+                        <span
+                          className={over ? 'price over' : 'price'}
+                          title={over ? '주간 처치 횟수(12회)를 넘어 수익에 포함되지 않습니다' : undefined}
+                        >
+                          {over ? '한도 초과' : formatMeso(share)}
+                        </span>
                       </>
                     )}
                   </li>
@@ -262,7 +279,7 @@ export function CharacterCard({ character, result, registeredOnly, party, onPart
             {registeredOnly ? '인게임 스케줄러에 등록된 항목이 없습니다.' : '오늘 접속 기록이 없거나 데이터가 없습니다.'}
           </p>
         ) : tab === 'bosses' ? (
-          <BossRows bosses={v.bosses} party={party} onPartyChange={onPartyChange} />
+          <BossRows bosses={v.bosses} party={party} overLimit={weeklyIncome(data, party).overLimit} onPartyChange={onPartyChange} />
         ) : (
           <ContentRows items={v[tab]} />
         )}

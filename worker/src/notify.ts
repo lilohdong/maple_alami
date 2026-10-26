@@ -2,9 +2,9 @@
 // 구성: 요약 임베드 1개 + 남은 할일이 있는 캐릭터별 임베드 (디스코드 제한: 메시지당 임베드 10개)
 // 같은 시각에 보낼 알림 종류가 여럿이면 한 메시지로 합친다.
 
-import type { CharacterStateResponse, SchedulerContent } from '../../src/api/nexon';
-import { formatMeso, normalizeDifficulty } from '../../src/data/crystals';
-import { bossShare, isBossDone, isContentDone, normalizeCycle, type PartySizes } from '../../src/lib/progress';
+import type { CharacterStateResponse, SchedulerBoss, SchedulerContent } from '../../src/api/nexon';
+import { bossKey, formatMeso, normalizeDifficulty } from '../../src/data/crystals';
+import { bossShare, isBossDone, isContentDone, normalizeCycle, weeklyIncome, type PartySizes } from '../../src/lib/progress';
 import { nextReset, type ResetKind } from '../../src/lib/reset';
 
 /** status: 지금 현황 (보스+일일+주간 전부, 남은 할일이 없어도 전송) */
@@ -78,21 +78,28 @@ interface Section {
 }
 
 function bossSection(s: CharacterStateResponse, party: PartySizes | undefined): Section | null {
-  const limit = s.weekly_boss_clear_limit_count;
-  if (limit > 0 && s.weekly_boss_clear_count >= limit) return null;
+  const income = weeklyIncome(s, party);
+  if (income.slots === 0) return null;
   const left = registered(s.boss_contents).filter((b) => normalizeCycle(b.cycle) === 'weekly' && !isBossDone(b));
   if (left.length === 0) return null;
 
-  // 판매 제한(limit) 안에서 남은 슬롯만큼 비싼 순으로 결정석 합산
-  const slots = Math.max(0, (limit || 12) - s.weekly_boss_clear_count);
-  const shares = left.map((b) => ({ b, v: bossShare(b, party) })).sort((a, b) => (b.v ?? 0) - (a.v ?? 0));
-  const meso = shares.slice(0, slots).reduce((sum, { v }) => sum + (v ?? 0), 0);
+  // 남은 처치 횟수 안에 드는 보스만 할일로 표시 (비싼 순). 횟수 밖 보스는 한 줄로 따로
+  const label = (b: SchedulerBoss) => `\`${normalizeDifficulty(b.difficulty)}\` ${b.content_name}`;
+  const isOver = (b: SchedulerBoss) => income.overLimit.has(bossKey(b.content_name, b.difficulty));
+  const within = left
+    .filter((b) => !isOver(b))
+    .map((b) => ({ b, v: bossShare(b, party) }))
+    .sort((a, b) => (b.v ?? 0) - (a.v ?? 0));
+  const over = left.filter(isOver);
+
+  const lines = within.map(({ b, v }) => `${label(b)}${v !== null ? ` · ${formatMeso(v)}` : ''}`);
+  if (over.length > 0) lines.push(`*처치 횟수 초과로 제외: ${over.map((b) => `${normalizeDifficulty(b.difficulty)} ${b.content_name}`).join(', ')}*`);
 
   return {
-    heading: `⚔️ **주간 보스** · \`${s.weekly_boss_clear_count}/${limit}\` 처치 · 남은 결정석 **${formatMeso(meso)}**`,
-    lines: shares.map(({ b, v }) => `\`${normalizeDifficulty(b.difficulty)}\` ${b.content_name}${v !== null ? ` · ${formatMeso(v)}` : ''}`),
-    count: left.length,
-    meso,
+    heading: `⚔️ **주간 보스** · \`${s.weekly_boss_clear_count}/${s.weekly_boss_clear_limit_count}\` 처치 · 남은 결정석 **${formatMeso(income.remaining)}**`,
+    lines,
+    count: within.length,
+    meso: income.remaining,
   };
 }
 
