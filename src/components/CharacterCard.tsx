@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { CharacterStateResponse, CharacterSummary, SchedulerBoss, SchedulerContent } from '../api/nexon';
-import { bossKey, formatMeso } from '../data/crystals';
+import { bossKey, formatMeso, normalizeDifficulty } from '../data/crystals';
 import {
   bossShare,
   CYCLE_LABELS,
@@ -26,10 +26,10 @@ interface Props {
 type Tab = 'bosses' | 'daily' | 'weekly';
 const TAB_LABELS: Record<Tab, string> = { bosses: '보스', daily: '일일', weekly: '주간' };
 
+/** key는 normalizeDifficulty() 결과 */
 const DIFFICULTY_CLASS: Record<string, string> = {
   이지: 'easy',
   노멀: 'normal',
-  노말: 'normal',
   하드: 'hard',
   카오스: 'chaos',
   익스트림: 'extreme',
@@ -93,7 +93,7 @@ function Ring({ value, max }: { value: number; max: number }) {
 
 function IncomeStrip({ data, party }: { data: CharacterStateResponse; party: PartySizes | undefined }) {
   const income = weeklyIncome(data, party);
-  if (income.expected === 0 && income.earned === 0) return null;
+  if (income.expected === 0 && income.earned === 0 && income.unknown === 0) return null;
   const ratio = income.expected > 0 ? Math.min(1, income.earned / income.expected) : 0;
   return (
     <div className="income">
@@ -153,7 +153,9 @@ function BossRows({ bosses, party, onPartyChange }: { bosses: SchedulerBoss[]; p
                 return (
                   <li key={`${b.content_name}-${b.difficulty}`} className={isBossDone(b) ? 'row done' : 'row'}>
                     <CheckIcon done={isBossDone(b)} />
-                    <span className={`diff ${DIFFICULTY_CLASS[b.difficulty] ?? ''}`}>{b.difficulty}</span>
+                    <span className={`diff ${DIFFICULTY_CLASS[normalizeDifficulty(b.difficulty)] ?? ''}`}>
+                      {normalizeDifficulty(b.difficulty)}
+                    </span>
                     <span className="row-name">{b.content_name}</span>
                     {share !== null && (
                       <>

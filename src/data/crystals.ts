@@ -113,8 +113,19 @@ export function normalizeBossName(name: string): string {
   return n;
 }
 
+/** API는 난이도를 영문(easy/normal/hard/chaos/extreme)으로 준다 */
+const DIFFICULTY_KO: Record<string, string> = {
+  easy: '이지',
+  normal: '노멀',
+  hard: '하드',
+  chaos: '카오스',
+  extreme: '익스트림',
+};
+
+/** 영문/한글 표기를 한글 정식 표기로 통일 (표시와 가격 조회에 공통 사용) */
 export function normalizeDifficulty(diff: string): string {
-  return diff.replace(/\s+/g, '').replace('노말', '노멀');
+  const d = diff.replace(/\s+/g, '');
+  return DIFFICULTY_KO[d.toLowerCase()] ?? d.replace('노말', '노멀');
 }
 
 /** 결정석 1개 가격. 표에 없으면 null */

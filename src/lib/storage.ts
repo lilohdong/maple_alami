@@ -3,6 +3,7 @@
 import type { CharacterSummary } from '../api/nexon';
 import type { PartySizes } from './progress';
 import type { NotifyPrefs } from '../api/notify';
+import { normalizeDifficulty } from '../data/crystals';
 
 const PREFIX = 'maple-alami:';
 
@@ -45,7 +46,23 @@ export interface NotifySettings {
 const DEFAULT_SETTINGS: Settings = { apiKey: '', tracked: [], registeredOnly: true, party: {} };
 
 export function loadSettings(): Settings {
-  return { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>('settings', {}) };
+  const s = { ...DEFAULT_SETTINGS, ...read<Partial<Settings>>('settings', {}) };
+  return { ...s, party: migrateParty(s.party) };
+}
+
+/** 예전 버전은 파티 인원 키에 영문 난이도('칼로스|normal')를 저장했음 → 한글 정식 표기로 변환 */
+function migrateParty(party: Settings['party']): Settings['party'] {
+  return Object.fromEntries(
+    Object.entries(party).map(([ocid, sizes]) => [
+      ocid,
+      Object.fromEntries(
+        Object.entries(sizes).map(([key, size]) => {
+          const i = key.lastIndexOf('|');
+          return [i < 0 ? key : `${key.slice(0, i)}|${normalizeDifficulty(key.slice(i + 1))}`, size];
+        }),
+      ),
+    ]),
+  );
 }
 
 export function saveSettings(settings: Settings): void {

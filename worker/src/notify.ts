@@ -1,7 +1,7 @@
 // 스케줄러 상태로 디스코드 알림 메시지를 만든다.
 
 import type { CharacterStateResponse } from '../../src/api/nexon';
-import { formatMeso } from '../../src/data/crystals';
+import { formatMeso, normalizeDifficulty } from '../../src/data/crystals';
 import { isBossDone, isContentDone, normalizeCycle, weeklyIncome, type PartySizes } from '../../src/lib/progress';
 
 export type NotifyKind = 'weeklyBoss' | 'weeklyContent' | 'daily' | 'status';
@@ -73,7 +73,7 @@ function bossLines(s: CharacterStateResponse, party: PartySizes | undefined): st
   const income = weeklyIncome(s, party);
   return [
     `**보스** ${s.weekly_boss_clear_count}/${s.weekly_boss_clear_limit_count} · 남은 결정석 ${formatMeso(income.expected - income.earned)}`,
-    left.map((b) => `${b.difficulty} ${b.content_name}`).join(', '),
+    left.map((b) => `${normalizeDifficulty(b.difficulty)} ${b.content_name}`).join(', '),
   ];
 }
 
