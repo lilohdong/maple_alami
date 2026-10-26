@@ -7,6 +7,8 @@ import { tally, visibleItems, weeklyIncome } from './lib/progress';
 import { ResetTimers } from './components/ResetTimers';
 import { SettingsPanel } from './components/SettingsPanel';
 import { CharacterCard } from './components/CharacterCard';
+import { buildPayload, NotifyPanel } from './components/NotifyPanel';
+import { NOTIFY_API, updateSubscription } from './api/notify';
 
 /** 화면이 보이는 동안 자동 새로고침 주기 */
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
@@ -16,6 +18,7 @@ const REQUEST_GAP_MS = 250;
 const DEMO = new URLSearchParams(location.search).has('demo');
 
 type StateResult = { data: CharacterStateResponse } | { error: string };
+type Panel = 'settings' | 'notify';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -26,7 +29,13 @@ function initialSettings(): Settings {
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(initialSettings);
-  const [showSettings, setShowSettings] = useState(() => !initialSettings().apiKey);
+  // ?panel=notify 처럼 링크로 패널을 바로 열 수 있음
+  const [panel, setPanel] = useState<Panel | null>(() => {
+    const requested = new URLSearchParams(location.search).get('panel');
+    if (requested === 'settings' || requested === 'notify') return requested;
+    return initialSettings().apiKey ? null : 'settings';
+  });
+  const togglePanel = (p: Panel) => setPanel((cur) => (cur === p ? null : p));
   const [states, setStates] = useState<Record<string, StateResult>>({});
   const [loading, setLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -94,6 +103,22 @@ export default function App() {
     };
   }, [refresh]);
 
+  // 알림이 켜져 있으면 캐릭터/파티/키 변경을 알림 서버에 반영 (연속 변경은 모아서 한 번)
+  const notifySyncKey = settings.notify ? JSON.stringify([apiKey, trackedIds, settings.party]) : '';
+  const lastSyncedKey = useRef(notifySyncKey);
+  useEffect(() => {
+    const sub = settings.notify;
+    if (DEMO || !sub || notifySyncKey === lastSyncedKey.current) return;
+    const timer = setTimeout(() => {
+      lastSyncedKey.current = notifySyncKey;
+      updateSubscription(sub, buildPayload(settings, sub.webhookUrl, sub.prefs)).catch(() => {
+        lastSyncedKey.current = ''; // 실패 시 다음 변경 때 재시도
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+    // settings 전체가 아니라 동기화 대상 값(notifySyncKey)이 바뀔 때만 실행
+  }, [notifySyncKey]);
+
   const setParty = (ocid: string, key: string, size: number) =>
     updateSettings((prev) => ({
       ...prev,
@@ -133,8 +158,17 @@ export default function App() {
             </svg>
             <span className="sr-only">새로고침</span>
           </button>
+          {!DEMO && NOTIFY_API && (
+            <button className={panel === 'notify' ? 'icon-btn active' : 'icon-btn'} onClick={() => togglePanel('notify')} title="디스코드 알림">
+              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                <path d="M5 8a5 5 0 0 1 10 0c0 4 1.5 5.5 2 6H3c.5-.5 2-2 2-6z M8 16.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {settings.notify && <span className="dot" aria-hidden="true" />}
+              <span className="sr-only">디스코드 알림</span>
+            </button>
+          )}
           {!DEMO && (
-            <button className={showSettings ? 'icon-btn active' : 'icon-btn'} onClick={() => setShowSettings((v) => !v)} title="설정">
+            <button className={panel === 'settings' ? 'icon-btn active' : 'icon-btn'} onClick={() => togglePanel('settings')} title="설정">
               <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
                 <path d="M10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M16.5 10l1.5-1.2-1.5-2.6-1.8.6a6 6 0 0 0-1.6-.9L12.8 4h-3l-.4 1.9a6 6 0 0 0-1.6.9l-1.8-.6-1.5 2.6L6 10l-1.5 1.2 1.5 2.6 1.8-.6c.5.4 1 .7 1.6.9l.4 1.9h3l.4-1.9c.6-.2 1.1-.5 1.6-.9l1.8.6 1.5-2.6z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
               </svg>
@@ -144,9 +178,10 @@ export default function App() {
         </div>
       </header>
 
-      {showSettings && (
-        <SettingsPanel settings={settings} onChange={(next) => updateSettings(() => next)} onDone={() => setShowSettings(false)} />
+      {panel === 'settings' && (
+        <SettingsPanel settings={settings} onChange={(next) => updateSettings(() => next)} onDone={() => setPanel(null)} />
       )}
+      {panel === 'notify' && <NotifyPanel settings={settings} onChange={updateSettings} />}
 
       <ResetTimers />
 
@@ -173,10 +208,10 @@ export default function App() {
         </section>
       )}
 
-      {!showSettings && tracked.length === 0 && (
+      {panel !== 'settings' && tracked.length === 0 && (
         <div className="empty">
           <p>설정에서 API 키를 입력하고 표시할 캐릭터를 선택해주세요.</p>
-          <button className="primary" onClick={() => setShowSettings(true)}>
+          <button className="primary" onClick={() => setPanel('settings')}>
             설정 열기
           </button>
         </div>

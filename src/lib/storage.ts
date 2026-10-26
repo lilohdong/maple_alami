@@ -2,6 +2,7 @@
 
 import type { CharacterSummary } from '../api/nexon';
 import type { PartySizes } from './progress';
+import type { NotifyPrefs } from '../api/notify';
 
 const PREFIX = 'maple-alami:';
 
@@ -30,6 +31,15 @@ export interface Settings {
   registeredOnly: boolean;
   /** 캐릭터(ocid)별 보스 파티 인원 */
   party: Record<string, PartySizes>;
+  /** 디스코드 알림 구독 정보 (켜져 있을 때만) */
+  notify?: NotifySettings;
+}
+
+export interface NotifySettings {
+  id: string;
+  token: string;
+  webhookUrl: string;
+  prefs: NotifyPrefs;
 }
 
 const DEFAULT_SETTINGS: Settings = { apiKey: '', tracked: [], registeredOnly: true, party: {} };

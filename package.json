@@ -8,13 +8,15 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "deploy": "npm run build && wrangler pages deploy dist --project-name=maple-alami --branch=master"
+    "deploy": "npm run build && wrangler pages deploy dist --project-name=maple-alami --branch=master",
+    "deploy:worker": "tsc -p worker/tsconfig.json && wrangler deploy -c worker/wrangler.toml"
   },
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "4.20250607.0",
     "@types/node": "^20.17.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

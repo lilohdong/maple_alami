@@ -93,10 +93,10 @@ async function request<T>(apiKey: string, path: string, params: Record<string, s
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
   const res = await fetch(url, { headers: { 'x-nxopen-api-key': apiKey } });
-  const body = await res.json().catch(() => null);
+  const body = (await res.json().catch(() => null)) as (T & { error?: { name?: string; message?: string } }) | null;
 
   if (!res.ok) {
-    const code: string = body?.error?.name ?? `HTTP${res.status}`;
+    const code = body?.error?.name ?? `HTTP${res.status}`;
     throw new NexonApiError(code, ERROR_MESSAGES[code] ?? body?.error?.message ?? `요청 실패 (${res.status})`, res.status);
   }
   return body as T;

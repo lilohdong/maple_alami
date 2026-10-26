@@ -1,0 +1,18 @@
+name = "maple-alami-notify"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+# 매일 09:00, 13:00 UTC = 18:00, 22:00 KST. 어떤 알림을 보낼지는 코드에서 요일/시각으로 결정
+[triggers]
+crons = ["0 9,13 * * *"]
+
+[[kv_namespaces]]
+binding = "SUBS"
+id = "6cc0a42eb1c545e286b37097317a8b5a"
+
+[vars]
+ALLOWED_ORIGINS = "https://maple-alami.pages.dev,http://localhost:5173"
+
+# 비밀값 (wrangler secret put 으로 설정):
+#   ENCRYPTION_KEY  구독 정보 암호화 키 (base64, 32바이트)
+#   INVITE_CODE     등록 시 필요한 초대 코드

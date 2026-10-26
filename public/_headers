@@ -1,9 +1,9 @@
 # Cloudflare Pages 응답 헤더
 # - API 키가 localStorage에 있으므로 스크립트/통신 출처를 최소한으로 제한
-# - connect-src: 넥슨 API만 허용 (키가 다른 곳으로 전송되지 않도록)
+# - connect-src: 넥슨 API와 알림 Worker만 허용 (키가 다른 곳으로 전송되지 않도록)
 # - img-src: 넥슨 캐릭터 외형 이미지
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; img-src 'self' data: https://open.api.nexon.com; connect-src 'self' https://open.api.nexon.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; img-src 'self' data: https://open.api.nexon.com; connect-src 'self' https://open.api.nexon.com https://maple-alami-notify.lilohdong.workers.dev; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
